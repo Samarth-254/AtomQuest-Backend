@@ -9,8 +9,11 @@
 ![Socket.IO](https://img.shields.io/badge/Socket.IO-4.8-white?style=for-the-badge&logo=socketdotio)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
 
-**A production-grade REST API + real-time backend for a corporate Goal Setting & Tracking Portal built during a hackathon.**  
+**A production-grade REST API + real-time backend for a corporate Goal Setting & Tracking Portal built for the Atomberg Hackathon.**  
 Supports multi-role workflows (Employee → Manager → Admin), quarterly check-ins, automated escalations, and Excel report exports.
+
+🔗 **Backend (Render):** [https://atomquest-backend-g9g6.onrender.com](https://atomquest-backend-g9g6.onrender.com)  
+🔗 **Frontend (Vercel):** [https://atom-quest-frontend.vercel.app](https://atom-quest-frontend.vercel.app)
 
 </div>
 
@@ -40,13 +43,12 @@ Supports multi-role workflows (Employee → Manager → Admin), quarterly check-
 - [Audit Logging](#audit-logging)
 - [Environment Variables](#environment-variables)
 - [Local Development](#local-development)
-- [Deployment](#deployment)
 
 ---
 
 ## Overview
 
-AtomQuest Backend powers a **hackathon-built corporate goal management platform** built for ZS Associates' campus challenge. The system enables:
+AtomQuest Backend powers a **hackathon-built corporate goal management platform** developed for the **Atomberg Hackathon**. The system enables:
 
 - **Employees** to create, manage, and submit goal sheets per cycle
 - **Managers** to review, approve, or return employee goals and leave check-in comments
@@ -347,6 +349,8 @@ All protected routes require:
 ```
 Authorization: Bearer <JWT_TOKEN>
 ```
+
+Base URL (production): `https://atomquest-backend-g9g6.onrender.com`
 
 ---
 
@@ -765,7 +769,7 @@ BREVO_SENDER_NAME=AtomQuest Portal
 BREVO_REPLY_TO=support@yourapp.com
 
 # Frontend (used in CORS and email links)
-FRONTEND_URL=https://your-frontend.vercel.app
+FRONTEND_URL=https://atom-quest-frontend.vercel.app
 ```
 
 ---
@@ -803,34 +807,6 @@ curl http://localhost:5000/api/health
 
 ---
 
-## Deployment
-
-The backend is production-ready for **Render**, **Railway**, or any Node.js PaaS.
-
-**Render (recommended):**
-1. Connect GitHub repo → New Web Service
-2. Build Command: `npm install`
-3. Start Command: `npm start`
-4. Add all environment variables in Render dashboard
-5. Enable auto-deploy from `main` branch
-
-**Docker:**
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-EXPOSE 5000
-CMD ["npm", "start"]
-```
-
-**CORS:** Set `FRONTEND_URL` to your exact Vercel/Netlify frontend URL. The Express app whitelists this origin and enables credentials.
-
-**SSL:** The PostgreSQL pool uses `ssl: { rejectUnauthorized: false }` for Neon serverless compatibility.
-
----
-
 ## Goal Lifecycle
 
 ```mermaid
@@ -850,6 +826,8 @@ stateDiagram-v2
 
 <div align="center">
 
-Built with ❤️ for the AtomQuest Hackathon — ZS Associates Campus Beats
+Built with ❤️ for the **Atomberg Hackathon**
+
+🔗 [Live Backend](https://atomquest-backend-g9g6.onrender.com) &nbsp;•&nbsp; 🔗 [Live Frontend](https://atom-quest-frontend.vercel.app)
 
 </div>
