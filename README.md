@@ -50,8 +50,8 @@ Supports multi-role workflows (Employee → Manager → Admin), quarterly check-
 
 AtomQuest Backend powers a **hackathon-built corporate goal management platform** developed for the **Atomberg Hackathon**. The system enables:
 
-- **Employees** to create, manage, and submit goal sheets per cycle
-- **Managers** to review, approve, or return employee goals and leave check-in comments
+- **Employees** to create a goal sheet, add goals to it, and submit directly for manager approval — there is no draft-save step exposed to the user
+- **Managers** to review, approve, or return employee goal sheets and leave check-in comments
 - **Admins** to administer the full system — users, cycles, escalation rules, audit logs, and bulk reports
 - **Automated escalations** via a daily cron job that detects stale submissions and notifies stakeholders
 - **Real-time notifications** pushed via Socket.IO when goal sheets are submitted, approved, or returned
@@ -404,17 +404,20 @@ Base URL (production): `https://atomquest-backend-g9g6.onrender.com`
 | `GET` | `/thrust-areas` | ✅ | Any | List all thrust areas (goal categories) |
 | `GET` | `/cycles` | ✅ | Any | List all goal cycles with window open/close dates |
 | `GET` | `/my-sheet` | ✅ | EMPLOYEE | Get own goal sheet + goals + latest progress score per goal |
-| `POST` | `/sheet` | ✅ | EMPLOYEE | Create a new goal sheet for the current cycle |
-| `POST` | `/` | ✅ | EMPLOYEE | Add a goal to a goal sheet |
-| `PUT` | `/:id` | ✅ | EMPLOYEE | Update a goal (only allowed when sheet is DRAFT/RETURNED) |
-| `DELETE` | `/:id` | ✅ | EMPLOYEE | Delete a goal from a sheet |
-| `POST` | `/submit/:sheetId` | ✅ | EMPLOYEE | Submit goal sheet for manager review |
-| `POST` | `/request-modification/:sheetId` | ✅ | EMPLOYEE | Request modification from manager with a reason |
+| `POST` | `/sheet` | ✅ | EMPLOYEE | Create a new goal sheet for the active cycle |
+| `POST` | `/` | ✅ | EMPLOYEE | Add a goal to the sheet (allowed while sheet is not yet submitted) |
+| `PUT` | `/:id` | ✅ | EMPLOYEE | Update a goal (only allowed when sheet is RETURNED or MOD_REQUESTED) |
+| `DELETE` | `/:id` | ✅ | EMPLOYEE | Delete a goal (only allowed when sheet is RETURNED or MOD_REQUESTED) |
+| `POST` | `/submit/:sheetId` | ✅ | EMPLOYEE | Submit goal sheet for manager approval |
+| `POST` | `/request-modification/:sheetId` | ✅ | EMPLOYEE | Request a modification on an already-submitted sheet, with a reason |
+
+> **How the flow works:** Employee creates a sheet (`POST /sheet`), adds goals (`POST /`), and submits immediately (`POST /submit/:sheetId`). There is no explicit "save as draft" action — goals are added in-session and the sheet goes straight to `SUBMITTED` on submit. The DB stores a `DRAFT`-equivalent state internally while goals are being built, but this is never shown or labelled to the user.
 
 **Business Rules enforced:**
 - Goal window must be open (checked against `goal_cycles.window_open` and `window_close`)
 - Minimum **10% weightage** per goal
-- Cannot edit goals once sheet status is `APPROVED` or `SUBMITTED` (unless returned/unlocked)
+- Cannot add, edit, or delete goals once sheet is `SUBMITTED` or `APPROVED`/`LOCKED`
+- Editing is re-enabled only when sheet status is `RETURNED` (manager returned it) or `MOD_REQUESTED` (employee requested modification)
 - One goal sheet per employee per cycle
 
 **Add Goal Request:**
@@ -441,7 +444,7 @@ Base URL (production): `https://atomquest-backend-g9g6.onrender.com`
 |--------|----------|------|------|-------------|
 | `GET` | `/team-sheets` | ✅ | MANAGER, ADMIN | Get team's goal sheets with aggregated stats |
 | `GET` | `/sheet/:sheetId` | ✅ | MANAGER, ADMIN | Get full detail of one employee's goal sheet + goals + check-ins |
-| `POST` | `/approve/:sheetId` | ✅ | MANAGER, ADMIN | Approve a submitted goal sheet (locks it) |
+| `POST` | `/approve/:sheetId` | ✅ | MANAGER, ADMIN | Approve a submitted goal sheet (locks it for check-ins) |
 | `POST` | `/return/:sheetId` | ✅ | MANAGER, ADMIN | Return a goal sheet for rework with a mandatory reason |
 
 **Team Sheets Response (per employee):**
@@ -596,7 +599,7 @@ flowchart LR
     MANAGER["👔 MANAGER"]
     ADMIN["🔑 ADMIN"]
 
-    EMPLOYEE -->|"Create/edit goal sheets\nSubmit goals\nUpdate check-ins\nRequest modification"| GOAL_OPS["Goal Operations"]
+    EMPLOYEE -->|"Create goal sheet\nAdd/submit goals\nUpdate check-ins\nRequest modification"| GOAL_OPS["Goal Operations"]
     MANAGER -->|"View team sheets\nApprove / Return goals\nAdd check-in comments\nView analytics"| MANAGER_OPS["Manager Operations"]
     ADMIN -->|"Full user CRUD\nCycle management\nUnlock sheets\nEscalation rules\nAudit logs\nAll reports"| ADMIN_OPS["Admin Operations"]
     ADMIN -.->|"inherits all"| MANAGER_OPS
@@ -809,22 +812,37 @@ curl http://localhost:5000/api/health
 
 ## Goal Lifecycle
 
+The employee creates a sheet, adds goals to it, then submits — all in one session. There is no "save draft" button. Once submitted, the sheet moves through approval, check-in, and optional return/modification cycles.
+
 ```mermaid
 stateDiagram-v2
-    [*] --> DRAFT : Employee creates goal sheet\n(POST /api/goals/sheet)
-    DRAFT --> SUBMITTED : Employee submits\n(POST /api/goals/submit/:sheetId)
+    [*] --> PENDING : Employee creates sheet\n(POST /api/goals/sheet)\nand adds goals\n(POST /api/goals/)
+
+    PENDING --> SUBMITTED : Employee submits for approval\n(POST /api/goals/submit/:sheetId)
+
     SUBMITTED --> APPROVED : Manager approves\n(POST /api/manager/approve/:sheetId)
     SUBMITTED --> RETURNED : Manager returns with reason\n(POST /api/manager/return/:sheetId)
-    RETURNED --> DRAFT : Employee edits and re-submits
-    APPROVED --> LOCKED : Goals locked automatically
+
+    RETURNED --> SUBMITTED : Employee edits goals & re-submits\n(PUT /api/goals/:id then submit)
+
+    SUBMITTED --> MOD_REQUESTED : Employee requests modification\n(POST /api/goals/request-modification/:sheetId)
+    MOD_REQUESTED --> SUBMITTED : Employee edits goals & re-submits
+
+    APPROVED --> LOCKED : Sheet locked automatically on approval\nCheck-ins now enabled
+
     LOCKED --> RETURNED : Admin unlocks\n(POST /api/admin/unlock/:sheetId)
+
+    LOCKED --> CHECKINS : Employee logs quarterly check-ins\n(POST /api/checkins)
     APPROVED --> CHECKINS : Employee logs quarterly check-ins\n(POST /api/checkins)
     CHECKINS --> CHECKINS : Manager adds comments\n(POST /api/checkins/manager-comment)
 ```
+
+> **Note:** The `PENDING` label above represents the internal DB state while the employee is building their sheet before submission. The frontend treats this as a single "create & submit" flow — goals are added and the sheet is submitted in the same session without an intermediate save step.
 
 ---
 
 <div align="center">
 
 *Built for Atomberg Hackathon 1.0 — by **Samarth Nagpal**.*
+
 </div>
