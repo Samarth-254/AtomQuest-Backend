@@ -826,8 +826,5 @@ stateDiagram-v2
 
 <div align="center">
 
-Built with ❤️ for the **Atomberg Hackathon**
-
-🔗 [Live Backend](https://atomquest-backend-g9g6.onrender.com) &nbsp;•&nbsp; 🔗 [Live Frontend](https://atom-quest-frontend.vercel.app)
-
+*Built for Atomberg Hackathon 1.0 — by **Samarth Nagpal**.*
 </div>
