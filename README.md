@@ -812,7 +812,7 @@ curl http://localhost:5000/api/health
 
 ## Goal Lifecycle
 
-The employee creates a sheet, adds goals to it, then submits — all in one session. There is no "save draft" button. Once submitted, the sheet moves through approval, check-in, and optional return/modification cycles.
+The employee creates a sheet, adds goals to it, then submits — all in one session. Once submitted, the sheet moves through approval, check-in, and optional return/modification cycles.
 
 ```mermaid
 stateDiagram-v2
