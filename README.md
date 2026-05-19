@@ -1,13 +1,12 @@
 <div align="center">
 
+# AtomQuest Backend
+
 ![AtomQuest](https://img.shields.io/badge/AtomQuest-Goal%20Tracking%20Portal-blue?style=for-the-badge)
 ![Node.js](https://img.shields.io/badge/Node.js-18%2B-green?style=for-the-badge&logo=nodedotjs)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Neon-336791?style=for-the-badge&logo=postgresql)
 ![Express](https://img.shields.io/badge/Express-4.18-black?style=for-the-badge&logo=express)
 ![Socket.IO](https://img.shields.io/badge/Socket.IO-4.8-white?style=for-the-badge&logo=socketdotio)
-![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
-
-# AtomQuest Backend
 
 **A production-grade REST API + real-time backend for a corporate Goal Setting & Tracking Portal built for the Atomberg Hackathon.**  
 Supports multi-role workflows (Employee → Manager → Admin), quarterly check-ins, automated escalations, and Excel report exports.
