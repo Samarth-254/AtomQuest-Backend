@@ -34,16 +34,8 @@ const upsertCheckin = async (req, res) => {
     return res.status(400).json({ message: 'goalId, cyclePhase, and status are required' });
 
   try {
-    const cycleRes = await pool.query(`SELECT * FROM goal_cycles WHERE is_active = TRUE LIMIT 1`);
-    if (!cycleRes.rows.length) return res.status(403).json({ message: 'No active review cycle open.' });
-    
-    const cycle = cycleRes.rows[0];
-    const now = new Date();
-    if (now < new Date(cycle.window_open) || now > new Date(cycle.window_close)) {
-      return res.status(403).json({ message: `The review window for ${cycle.cycle_name} is currently closed.` });
-    }
     const goalRes = await pool.query(
-      `SELECT g.*, gs.employee_id, gs.is_locked
+      `SELECT g.*, gs.employee_id, gs.is_locked, gs.cycle_id
        FROM goals g JOIN goal_sheets gs ON g.goal_sheet_id = gs.id
        WHERE g.id = $1`,
       [goalId]
@@ -59,6 +51,30 @@ const upsertCheckin = async (req, res) => {
 
     if (!goal.is_locked)
       return res.status(400).json({ message: 'Goals must be approved before check-in' });
+
+    const cycleRes = await pool.query(
+      `SELECT id, cycle_name, is_active FROM goal_cycles WHERE id = $1`,
+      [goal.cycle_id]
+    );
+
+    if (!cycleRes.rows.length || !cycleRes.rows[0].is_active) {
+      return res.status(403).json({ message: 'No active review cycle open.' });
+    }
+
+    const windowRes = await pool.query(
+      `SELECT window_open, window_close FROM goal_cycle_windows WHERE cycle_id = $1 AND phase = $2`,
+      [goal.cycle_id, cyclePhase]
+    );
+
+    if (!windowRes.rows.length) {
+      return res.status(403).json({ message: `No check-in window configured for ${cyclePhase}.` });
+    }
+
+    const window = windowRes.rows[0];
+    const now = new Date();
+    if (now < new Date(window.window_open) || now > new Date(window.window_close)) {
+      return res.status(403).json({ message: `The ${cyclePhase} check-in window is currently closed.` });
+    }
 
     const score = progressScore !== undefined && progressScore !== null
       ? Number(progressScore)
@@ -174,21 +190,65 @@ const upsertCheckin = async (req, res) => {
 };
 
 const getMyProgress = async (req, res) => {
-  const { cyclePhase } = req.query;
+  const { cyclePhase, all } = req.query;
 
   try {
+    if (cyclePhase) {
+      const result = await pool.query(
+        `SELECT g.id AS goal_id, g.title, g.uom_type, g.target_value, g.target_date, g.weightage,
+                ta.name AS thrust_area,
+                c.cycle_phase, c.actual_value, c.actual_date, c.status,
+                c.progress_score, c.employee_note, c.manager_comment, c.id AS checkin_id,
+                c.checked_in_at
+         FROM goals g
+         JOIN goal_sheets gs ON g.goal_sheet_id = gs.id
+         LEFT JOIN thrust_areas ta ON g.thrust_area_id = ta.id
+         LEFT JOIN checkins c ON c.goal_id = g.id AND c.cycle_phase = $2
+         WHERE gs.employee_id = $1 AND gs.status <> 'DRAFT'
+         ORDER BY g.id`,
+        [req.user.id, cyclePhase]
+      );
+
+      return res.json(result.rows);
+    }
+
+    if (String(all) === 'true') {
+      const result = await pool.query(
+        `SELECT g.id AS goal_id, g.title, g.uom_type, g.target_value, g.target_date, g.weightage,
+                ta.name AS thrust_area,
+                c.cycle_phase, c.actual_value, c.actual_date, c.status,
+                c.progress_score, c.employee_note, c.manager_comment, c.id AS checkin_id,
+                c.checked_in_at
+         FROM goals g
+         JOIN goal_sheets gs ON g.goal_sheet_id = gs.id
+         LEFT JOIN thrust_areas ta ON g.thrust_area_id = ta.id
+         LEFT JOIN checkins c ON c.goal_id = g.id
+         WHERE gs.employee_id = $1 AND gs.status <> 'DRAFT'
+         ORDER BY g.id, c.cycle_phase`,
+        [req.user.id]
+      );
+
+      return res.json(result.rows);
+    }
+
     const result = await pool.query(
       `SELECT g.id AS goal_id, g.title, g.uom_type, g.target_value, g.target_date, g.weightage,
               ta.name AS thrust_area,
               c.cycle_phase, c.actual_value, c.actual_date, c.status,
-              c.progress_score, c.employee_note, c.manager_comment, c.id AS checkin_id
+              c.progress_score, c.employee_note, c.manager_comment, c.id AS checkin_id,
+              c.checked_in_at
        FROM goals g
        JOIN goal_sheets gs ON g.goal_sheet_id = gs.id
        LEFT JOIN thrust_areas ta ON g.thrust_area_id = ta.id
-       LEFT JOIN checkins c ON c.goal_id = g.id ${cyclePhase ? 'AND c.cycle_phase = $2' : ''}
+       LEFT JOIN LATERAL (
+         SELECT * FROM checkins c
+         WHERE c.goal_id = g.id
+         ORDER BY c.checked_in_at DESC NULLS LAST
+         LIMIT 1
+       ) c ON TRUE
        WHERE gs.employee_id = $1 AND gs.status <> 'DRAFT'
        ORDER BY g.id`,
-      cyclePhase ? [req.user.id, cyclePhase] : [req.user.id]
+      [req.user.id]
     );
 
     res.json(result.rows);

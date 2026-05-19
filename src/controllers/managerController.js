@@ -571,11 +571,13 @@ const addCheckinComment = async (req, res) => {
 
   try {
     const checkRes = await pool.query(
-      `SELECT c.id, u.id AS employee_id, u.manager_id, u.name AS employee_name, u.email AS employee_email, g.title AS goal_title
+      `SELECT c.id, c.cycle_phase, u.id AS employee_id, u.manager_id, u.name AS employee_name, u.email AS employee_email, g.title AS goal_title,
+              gs.cycle_id, gc.cycle_name, gc.is_active
        FROM checkins c
        JOIN goals g ON c.goal_id = g.id
        JOIN goal_sheets gs ON g.goal_sheet_id = gs.id
        JOIN users u ON gs.employee_id = u.id
+       JOIN goal_cycles gc ON gs.cycle_id = gc.id
        WHERE c.id = $1`,
       [checkinId]
     );
@@ -588,6 +590,25 @@ const addCheckinComment = async (req, res) => {
 
     if (!isAdmin(req) && checkin.manager_id !== req.user.id) {
       return res.status(403).json({ message: 'Unauthorized' });
+    }
+
+    if (!checkin.is_active) {
+      return res.status(403).json({ message: 'No active review cycle open.' });
+    }
+
+    const windowRes = await pool.query(
+      `SELECT window_open, window_close FROM goal_cycle_windows WHERE cycle_id = $1 AND phase = $2`,
+      [checkin.cycle_id, checkin.cycle_phase]
+    );
+
+    if (!windowRes.rows.length) {
+      return res.status(403).json({ message: `No check-in window configured for ${checkin.cycle_phase}.` });
+    }
+
+    const window = windowRes.rows[0];
+    const now = new Date();
+    if (now < new Date(window.window_open) || now > new Date(window.window_close)) {
+      return res.status(403).json({ message: `The ${checkin.cycle_phase} check-in window is currently closed.` });
     }
 
     await pool.query(

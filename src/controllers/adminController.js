@@ -169,10 +169,23 @@ const getAuditLogs = async (req, res) => {
 };
 
 const createCycle = async (req, res) => {
-  const { cycleName, phase, windowOpen, windowClose, isActive } = req.body;
+  const { cycleName, windows, isActive } = req.body;
 
-  if (!cycleName || !phase || !windowOpen || !windowClose) {
-    return res.status(400).json({ message: 'All cycle fields are required' });
+  if (!cycleName || !Array.isArray(windows) || windows.length === 0) {
+    return res.status(400).json({ message: 'Cycle name and windows are required' });
+  }
+
+  const requiredPhases = ['GOAL_SETTING', 'Q1', 'Q2', 'Q3', 'Q4'];
+  const phaseSet = new Set(windows.map((w) => w.phase));
+  const missing = requiredPhases.filter((p) => !phaseSet.has(p));
+
+  if (missing.length) {
+    return res.status(400).json({ message: `Missing windows for phases: ${missing.join(', ')}` });
+  }
+
+  const goalSettingWindow = windows.find((w) => w.phase === 'GOAL_SETTING');
+  if (!goalSettingWindow?.windowOpen || !goalSettingWindow?.windowClose) {
+    return res.status(400).json({ message: 'GOAL_SETTING window dates are required' });
   }
 
   try {
@@ -180,12 +193,33 @@ const createCycle = async (req, res) => {
       await pool.query('UPDATE goal_cycles SET is_active = FALSE');
     }
 
+    // Keep legacy fields populated with GOAL_SETTING window to satisfy DB constraints.
     const result = await pool.query(
       `INSERT INTO goal_cycles (cycle_name, phase, window_open, window_close, is_active, created_by)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [cycleName, phase, windowOpen, windowClose, isActive || false, req.user.id]
+      [
+        cycleName,
+        'GOAL_SETTING',
+        goalSettingWindow.windowOpen,
+        goalSettingWindow.windowClose,
+        isActive || false,
+        req.user.id
+      ]
     );
+
+    const cycleId = result.rows[0].id;
+    const insertPromises = windows.map((w) =>
+      pool.query(
+        `INSERT INTO goal_cycle_windows (cycle_id, phase, window_open, window_close)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (cycle_id, phase)
+         DO UPDATE SET window_open = EXCLUDED.window_open, window_close = EXCLUDED.window_close`,
+        [cycleId, w.phase, w.windowOpen, w.windowClose]
+      )
+    );
+
+    await Promise.all(insertPromises);
 
     res.status(201).json(result.rows[0]);
   } catch (err) {

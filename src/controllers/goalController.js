@@ -2,6 +2,33 @@ const pool = require('../config/db');
 const { logAudit } = require('../middleware/auditLogger');
 const { sendEmail, emailTemplates } = require('../config/email');
 
+const getCycleWindows = async (cycleId) => {
+  const res = await pool.query(
+    'SELECT * FROM goal_cycle_windows WHERE cycle_id = $1 ORDER BY window_open ASC',
+    [cycleId]
+  );
+  return res.rows || [];
+};
+
+const findWindowByPhase = (windows, phase) =>
+  windows.find((w) => w.phase === phase) || null;
+
+const isWindowOpen = (window) => {
+  if (!window) return false;
+  const now = new Date();
+  return now >= new Date(window.window_open) && now <= new Date(window.window_close);
+};
+
+const ensureGoalSettingWindowOpen = async (cycleId, cycleName = 'this cycle') => {
+  const windows = await getCycleWindows(cycleId);
+  const goalSettingWindow = findWindowByPhase(windows, 'GOAL_SETTING');
+  if (!isWindowOpen(goalSettingWindow)) {
+    const err = new Error(`The goal setting window for ${cycleName} is currently closed.`);
+    err.statusCode = 403;
+    throw err;
+  }
+};
+
 const getMyGoalSheet = async (req, res) => {
   const { cycleId } = req.query;
   const employeeId = req.user.id;
@@ -16,6 +43,8 @@ const getMyGoalSheet = async (req, res) => {
       return res.status(404).json({ message: 'No active cycle found' });
 
     const cycle = cycleRes.rows[0];
+    const windows = await getCycleWindows(cycle.id);
+    const phase = computeCurrentPhase(windows);
 
     const sheetRes = await pool.query(
       `SELECT gs.*, u.name AS employee_name, u.email AS employee_email
@@ -47,8 +76,11 @@ const getMyGoalSheet = async (req, res) => {
       goals = goalsRes.rows;
     }
 
-    res.json({ cycle, sheet, goals });
+    res.json({ cycle: { ...cycle, phase, windows }, sheet, goals });
   } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ message: err.message });
+    }
     console.error(err);
     res.status(500).json({ message: 'Server error' });
   }
@@ -59,13 +91,14 @@ const createGoalSheet = async (req, res) => {
   const { cycleId } = req.body;
 
   try {
-    const cycleRes = await pool.query('SELECT window_open, window_close, cycle_name FROM goal_cycles WHERE id = $1', [cycleId]);
+    const cycleRes = await pool.query('SELECT id, cycle_name FROM goal_cycles WHERE id = $1', [cycleId]);
     if (!cycleRes.rows.length) return res.status(404).json({ message: 'Cycle not found' });
     
     const cycle = cycleRes.rows[0];
-    const now = new Date();
-    if (now < new Date(cycle.window_open) || now > new Date(cycle.window_close)) {
-      return res.status(403).json({ message: `The review window for ${cycle.cycle_name} is currently closed.` });
+    const windows = await getCycleWindows(cycle.id);
+    const goalSettingWindow = findWindowByPhase(windows, 'GOAL_SETTING');
+    if (!isWindowOpen(goalSettingWindow)) {
+      return res.status(403).json({ message: `The goal setting window for ${cycle.cycle_name} is currently closed.` });
     }
     const existing = await pool.query(
       'SELECT id FROM goal_sheets WHERE employee_id = $1 AND cycle_id = $2',
@@ -83,6 +116,9 @@ const createGoalSheet = async (req, res) => {
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ message: err.message });
+    }
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -115,6 +151,7 @@ const addGoal = async (req, res) => {
       return res.status(403).json({ message: 'Goal sheet not found or unauthorized' });
 
     const sheet = sheetRes.rows[0];
+    await ensureGoalSettingWindowOpen(sheet.cycle_id);
 
     // Block adds when SUBMITTED, APPROVED, or MOD_REQUESTED
     if (sheet.status === 'SUBMITTED' || sheet.status === 'APPROVED' || sheet.status === 'MOD_REQUESTED' || sheet.is_locked)
@@ -175,7 +212,7 @@ const updateGoal = async (req, res) => {
 
   try {
     const goalRes = await pool.query(
-      `SELECT g.*, gs.is_locked, gs.employee_id, gs.status AS gs_status
+      `SELECT g.*, gs.is_locked, gs.employee_id, gs.status AS gs_status, gs.cycle_id
        FROM goals g
        JOIN goal_sheets gs ON g.goal_sheet_id = gs.id WHERE g.id = $1`,
       [id]
@@ -184,6 +221,7 @@ const updateGoal = async (req, res) => {
     if (!goalRes.rows.length) return res.status(404).json({ message: 'Goal not found' });
 
     const goal = goalRes.rows[0];
+    await ensureGoalSettingWindowOpen(goal.cycle_id);
 
     if (goal.employee_id !== req.user.id)
       return res.status(403).json({ message: 'Unauthorized' });
@@ -222,6 +260,9 @@ const updateGoal = async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ message: err.message });
+    }
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -231,7 +272,7 @@ const deleteGoal = async (req, res) => {
 
   try {
     const goalRes = await pool.query(
-      `SELECT g.*, gs.is_locked, gs.status AS gs_status, gs.employee_id
+      `SELECT g.*, gs.is_locked, gs.status AS gs_status, gs.employee_id, gs.cycle_id
        FROM goals g
        JOIN goal_sheets gs ON g.goal_sheet_id = gs.id WHERE g.id = $1`,
       [id]
@@ -240,6 +281,7 @@ const deleteGoal = async (req, res) => {
     if (!goalRes.rows.length) return res.status(404).json({ message: 'Goal not found' });
 
     const goal = goalRes.rows[0];
+    await ensureGoalSettingWindowOpen(goal.cycle_id);
 
     if (goal.employee_id !== req.user.id)
       return res.status(403).json({ message: 'Unauthorized' });
@@ -269,11 +311,13 @@ const submitGoalSheet = async (req, res) => {
 
   try {
     const sheetRes = await pool.query(
-      `SELECT gs.*, u.name AS emp_name, u.manager_id,
-              m.email AS manager_email, m.name AS manager_name
+            `SELECT gs.*, u.name AS emp_name, u.manager_id,
+              m.email AS manager_email, m.name AS manager_name,
+              c.cycle_name
        FROM goal_sheets gs
        JOIN users u ON gs.employee_id = u.id
        LEFT JOIN users m ON u.manager_id = m.id
+             LEFT JOIN goal_cycles c ON gs.cycle_id = c.id
        WHERE gs.id = $1 AND gs.employee_id = $2`,
       [sheetId, req.user.id]
     );
@@ -282,6 +326,7 @@ const submitGoalSheet = async (req, res) => {
       return res.status(403).json({ message: 'Sheet not found or unauthorized' });
 
     const sheet = sheetRes.rows[0];
+    await ensureGoalSettingWindowOpen(sheet.cycle_id, sheet.cycle_name);
 
     // Cannot re-submit a sheet that's already waiting for review
     if (sheet.status === 'SUBMITTED')
@@ -346,6 +391,9 @@ const submitGoalSheet = async (req, res) => {
 
     res.json({ message: 'Goal sheet submitted successfully' });
   } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ message: err.message });
+    }
     console.error(err);
     res.status(500).json({ message: 'Server error' });
   }
@@ -440,10 +488,39 @@ const getThrustAreas = async (req, res) => {
   }
 };
 
+const computeCurrentPhase = (windows) => {
+  const now = new Date();
+  const match = windows.find((w) => now >= new Date(w.window_open) && now <= new Date(w.window_close));
+  return match ? match.phase : null;
+};
+
 const getCycles = async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM goal_cycles ORDER BY created_at DESC');
-    res.json(result.rows);
+    const cyclesRes = await pool.query('SELECT * FROM goal_cycles ORDER BY created_at DESC');
+    const cycles = cyclesRes.rows;
+
+    if (!cycles.length) {
+      return res.json([]);
+    }
+
+    const windowsRes = await pool.query(
+      `SELECT * FROM goal_cycle_windows WHERE cycle_id = ANY($1::int[]) ORDER BY window_open ASC`,
+      [cycles.map((c) => c.id)]
+    );
+
+    const windowsByCycle = windowsRes.rows.reduce((acc, row) => {
+      acc[row.cycle_id] = acc[row.cycle_id] || [];
+      acc[row.cycle_id].push(row);
+      return acc;
+    }, {});
+
+    const payload = cycles.map((cycle) => {
+      const windows = windowsByCycle[cycle.id] || [];
+      const phase = computeCurrentPhase(windows);
+      return { ...cycle, phase, windows };
+    });
+
+    res.json(payload);
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
   }
