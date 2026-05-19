@@ -1,5 +1,3 @@
-# AtomQuest Backend
-
 <div align="center">
 
 ![AtomQuest](https://img.shields.io/badge/AtomQuest-Goal%20Tracking%20Portal-blue?style=for-the-badge)
@@ -8,16 +6,8 @@
 ![Express](https://img.shields.io/badge/Express-4.18-black?style=for-the-badge&logo=express)
 ![Socket.IO](https://img.shields.io/badge/Socket.IO-4.8-white?style=for-the-badge&logo=socketdotio)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
+
 # AtomQuest Backend
-
-<div align="center">
-
-![AtomQuest](https://img.shields.io/badge/AtomQuest-Goal%20Tracking%20Portal-blue?style=for-the-badge)
-![Node.js](https://img.shields.io/badge/Node.js-18%2B-green?style=for-the-badge&logo=nodedotjs)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Neon-336791?style=for-the-badge&logo=postgresql)
-![Express](https://img.shields.io/badge/Express-4.18-black?style=for-the-badge&logo=express)
-![Socket.IO](https://img.shields.io/badge/Socket.IO-4.8-white?style=for-the-badge&logo=socketdotio)
-![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
 
 **A production-grade REST API + real-time backend for a corporate Goal Setting & Tracking Portal built for the Atomberg Hackathon.**  
 Supports multi-role workflows (Employee → Manager → Admin), quarterly check-ins, automated escalations, and Excel report exports.
@@ -55,6 +45,7 @@ Supports multi-role workflows (Employee → Manager → Admin), quarterly check-
 - [Audit Logging](#audit-logging)
 - [Environment Variables](#environment-variables)
 - [Local Development](#local-development)
+- [Goal Lifecycle](#goal-lifecycle)
 
 ---
 
@@ -89,7 +80,6 @@ AtomQuest Backend powers a **hackathon-built corporate goal management platform*
 
 ---
 
-## System Architecture
 ## System Architecture
 
 ```mermaid
@@ -140,7 +130,7 @@ flowchart TB
         T_GS["goal_sheets"]
         T_GOALS["goals"]
         T_CYCLES["goal_cycles"]
-      T_CYCLE_WINDOWS["goal_cycle_windows"]
+        T_CYCLE_WINDOWS["goal_cycle_windows"]
         T_TA["thrust_areas"]
         T_CHECKINS["checkins"]
         T_NOTIF["notifications"]
@@ -202,12 +192,12 @@ erDiagram
     }
 
     goal_cycle_windows {
-      int id PK
-      int cycle_id FK
-      string phase
-      date window_open
-      date window_close
-      timestamp created_at
+        int id PK
+        int cycle_id FK
+        string phase
+        date window_open
+        date window_close
+        timestamp created_at
     }
 
     thrust_areas {
@@ -325,7 +315,6 @@ erDiagram
 AtomQuest-Backend/
 │
 ├── index.js                        # Entry point — starts HTTP server, boots cron job
-│
 ├── package.json                    # Dependencies & npm scripts
 ├── .env.example                    # Sample environment variables
 ├── .gitignore
@@ -805,38 +794,7 @@ FRONTEND_URL=https://atom-quest-frontend.vercel.app
 
 **Prerequisites:** Node.js 18+, a Neon or local PostgreSQL database
 
-# Server
-PORT=5000
-
-# Database (Neon PostgreSQL)
-DATABASE_URL=postgresql://user:pass@host.neon.tech/dbname?sslmode=require
-
-# JWT
-JWT_SECRET=your_super_secret_key_here
-JWT_EXPIRES_IN=7d
-
-# Brevo Email API
-BREVO_API_KEY=xkeysib-your-api-key
-BREVO_SENDER_EMAIL=noreply@yourapp.com
-BREVO_SENDER_NAME=AtomQuest Portal
-BREVO_REPLY_TO=support@yourapp.com
-
-# Frontend (used in CORS and email links)
-FRONTEND_URL=https://atom-quest-frontend.vercel.app
-```
-
----
-
-## Local Development
-
-**Prerequisites:** Node.js 18+, a Neon or local PostgreSQL database
-
 ```bash
-# 1. Clone the repository
-git clone https://github.com/Samarth-254/AtomQuest-Backend.git
-cd AtomQuest-Backend
-
-# 2. Install dependencies
 # 1. Clone the repository
 git clone https://github.com/Samarth-254/AtomQuest-Backend.git
 cd AtomQuest-Backend
@@ -849,56 +807,7 @@ cp .env.example .env
 # Fill in DATABASE_URL, JWT_SECRET, BREVO keys, and FRONTEND_URL
 
 # 4. Start dev server with hot reload
-
-# 3. Configure environment
-cp .env.example .env
-# Fill in DATABASE_URL, JWT_SECRET, BREVO keys, and FRONTEND_URL
-
-# 4. Start dev server with hot reload
 npm run dev
-# → PostgreSQL connected (Neon)
-# → Server running on port 5000
-# → Escalation cron scheduled for every day at 9:00 AM
-
-# 5. Seed demo passwords (optional)
-curl -X POST http://localhost:5000/api/auth/seed-passwords
-# All users → password: password123
-
-# 6. Health check
-curl http://localhost:5000/api/health
-# → { "status": "ok", "message": "Server healthy", "timestamp": "..." }
-```
-
----
-
-## Goal Lifecycle
-
-The employee creates a sheet, adds goals to it, then submits — all in one session. Once submitted, the sheet moves through approval, check-in, and optional return/modification cycles.
-
-```mermaid
-stateDiagram-v2
-    [*] --> PENDING : Employee creates sheet\n(POST /api/goals/sheet)\nand adds goals\n(POST /api/goals/)
-
-    PENDING --> SUBMITTED : Employee submits for approval\n(POST /api/goals/submit/:sheetId)
-
-    SUBMITTED --> APPROVED : Manager approves\n(POST /api/manager/approve/:sheetId)
-    SUBMITTED --> RETURNED : Manager returns with reason\n(POST /api/manager/return/:sheetId)
-
-    RETURNED --> SUBMITTED : Employee edits goals & re-submits\n(PUT /api/goals/:id then submit)
-
-    SUBMITTED --> MOD_REQUESTED : Employee requests modification\n(POST /api/goals/request-modification/:sheetId)
-    MOD_REQUESTED --> SUBMITTED : Employee edits goals & re-submits
-
-    APPROVED --> LOCKED : Sheet locked automatically on approval\nCheck-ins now enabled
-
-    LOCKED --> RETURNED : Admin unlocks\n(POST /api/admin/unlock/:sheetId)
-
-    LOCKED --> CHECKINS : Employee logs quarterly check-ins\n(POST /api/checkins)
-    APPROVED --> CHECKINS : Employee logs quarterly check-ins\n(POST /api/checkins)
-    CHECKINS --> CHECKINS : Manager adds comments\n(POST /api/checkins/manager-comment)
-```
-
-> **Note:** The `PENDING` label above represents the internal DB state while the employee is building their sheet before submission. The frontend treats this as a single "create & submit" flow — goals are added and the sheet is submitted in the same session without an intermediate save step.
 # → PostgreSQL connected (Neon)
 # → Server running on port 5000
 # → Escalation cron scheduled for every day at 9:00 AM
